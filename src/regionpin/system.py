@@ -13,6 +13,22 @@ from pathlib import Path
 CREATE_NO_WINDOW = 0x08000000
 
 
+def system_exe(*parts):
+    """Windows 系統資料夾內程式的完整路徑。
+
+    不能只寫 "powershell.exe"：Windows 會先在「本程式所在的資料夾」找同名程式，
+    exe 放在「下載」資料夾時，別人放一個假的 powershell.exe 就會以系統管理員身分被執行。
+    """
+    buf = ctypes.create_unicode_buffer(260)
+    n = ctypes.windll.kernel32.GetSystemDirectoryW(buf, len(buf))
+    system32 = buf.value if 0 < n < len(buf) else os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                                                 "System32")
+    return os.path.join(system32, *parts)
+
+
+POWERSHELL = system_exe("WindowsPowerShell", "v1.0", "powershell.exe")
+
+
 class PowerShellError(RuntimeError):
     pass
 
@@ -23,7 +39,10 @@ def run_ps(script, timeout=60):
     結束碼只由 try/catch 決定：被 -ErrorAction SilentlyContinue 忽略的錯誤（例如「找不到規則」）
     不會讓整個腳本被當成失敗。腳本內不可使用 return / exit。
     """
-    full = ("$ErrorActionPreference = 'Stop'\n"
+    # 只從系統內建的模組資料夾自動載入模組：PSModulePath 預設先找使用者的「文件」資料夾，
+    # 不限制的話，放一個假的 NetSecurity 模組就能以系統管理員身分執行
+    full = ("$env:PSModulePath = \"$PSHOME\\Modules\"\n"
+            "$ErrorActionPreference = 'Stop'\n"
             "$ProgressPreference = 'SilentlyContinue'\n"
             "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n"
             "try {\n" + script + "\n}\n"
@@ -34,7 +53,7 @@ def run_ps(script, timeout=60):
             "exit 0\n")
     encoded = base64.b64encode(full.encode("utf-16-le")).decode("ascii")
     proc = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        [POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
          "-EncodedCommand", encoded],
         capture_output=True, timeout=timeout, creationflags=CREATE_NO_WINDOW)
     out = proc.stdout.decode("utf-8", errors="replace")
@@ -49,9 +68,13 @@ def run_ps_json(script, timeout=60):
     return json.loads(out) if out else None
 
 
+# PowerShell 把這四個 Unicode 引號也當成單引號，只跳脫 ' 的話可以用 ’ 跳出字串注入指令
+_PS_SINGLE_QUOTES = "'‘’‚‛"
+
+
 def ps_quote(s):
-    """把字串轉成 PowerShell 單引號字串常值。"""
-    return "'" + str(s).replace("'", "''") + "'"
+    """把字串轉成 PowerShell 單引號字串常值（同 PowerShell 的 EscapeSingleQuotedStringContent）。"""
+    return "'" + "".join(c + c if c in _PS_SINGLE_QUOTES else c for c in str(s)) + "'"
 
 
 def _clean_ps_error(text):
@@ -97,8 +120,10 @@ def relaunch_as_admin(args):
         pythonw = Path(exe).with_name("pythonw.exe")
         if pythonw.exists():
             exe = str(pythonw)
-        params = subprocess.list2cmdline(["-m", "regionpin"] + list(args))
-        workdir = os.getcwd()
+        # -I：不把工作目錄加進 sys.path、忽略 PYTHONPATH 等環境變數。否則在別的資料夾執行時，
+        # 那裡的 json.py 之類的檔案會以系統管理員身分被匯入
+        params = subprocess.list2cmdline(["-I", "-m", "regionpin"] + list(args))
+        workdir = str(Path(__file__).resolve().parents[2])
     rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, workdir, 1)
     return rc > 32
 

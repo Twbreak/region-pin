@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from .system import CREATE_NO_WINDOW, run_ps_json
+from .system import CREATE_NO_WINDOW, run_ps_json, system_exe
 
 _PING_TIME = re.compile(r"[=<]\s*(\d+)\s*ms", re.IGNORECASE)
 _PKT_LINE = re.compile(r":\s(\S+)\.(\d+)\s>\s(\S+)\.(\d+):\sUDP")
@@ -17,7 +17,7 @@ _PKT_LINE = re.compile(r":\s(\S+)\.(\d+)\s>\s(\S+)\.(\d+):\sUDP")
 def ping(ip, count=3, timeout_ms=1000):
     """回傳平均延遲（ms），完全沒回應則回傳 None。"""
     try:
-        proc = subprocess.run(["ping", "-n", str(count), "-w", str(timeout_ms), ip],
+        proc = subprocess.run([system_exe("PING.EXE"), "-n", str(count), "-w", str(timeout_ms), ip],
                               capture_output=True, timeout=count * (timeout_ms / 1000 + 1) + 5,
                               creationflags=CREATE_NO_WINDOW)
     except subprocess.TimeoutExpired:
@@ -87,7 +87,7 @@ def parse_flows(text, local_ports):
 
 
 def _pktmon(*args, check=True):
-    proc = subprocess.run(["pktmon", *args], capture_output=True, timeout=120,
+    proc = subprocess.run([system_exe("pktmon.exe"), *args], capture_output=True, timeout=120,
                           creationflags=CREATE_NO_WINDOW)
     if check and proc.returncode != 0:
         msg = (proc.stdout + proc.stderr).decode("oem", errors="replace").strip()

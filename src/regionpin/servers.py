@@ -57,6 +57,10 @@ class ServerList:
         always = raw.get("always_allow", [])
         for c in [c for r in regions for c in r.all_cidrs] + [c for g in always for c in g["cidrs"]]:
             ipaddress.ip_network(c, strict=False)  # 格式錯誤就在載入時報錯
+        for r in regions:
+            if r.ping:
+                # 會當成 ping 的參數，只接受 IP（避免變成主機名稱或 ping 的選項）
+                ipaddress.ip_address(r.ping)
         return cls(path, regions, always, raw)
 
     def save(self):
@@ -99,11 +103,10 @@ class ServerList:
     def update_from_gcp(self, timeout=20):
         """從 Google 官方 cloud.json 更新有 gcp_scope 的區域。回傳 {token: (舊數量, 新數量)}。"""
         with urllib.request.urlopen(GCP_RANGES_URL, timeout=timeout) as resp:
-            data = json.load(resp)
-        by_scope = {}
-        for p in data["prefixes"]:
-            prefix = p.get("ipv4Prefix") or p.get("ipv6Prefix")
-            by_scope.setdefault(p.get("scope"), []).append(prefix)
+            body = resp.read(_MAX_GCP_BYTES + 1)
+        if len(body) > _MAX_GCP_BYTES:
+            raise ValueError("Google 清單大小異常，已停止更新")
+        by_scope = parse_gcp_prefixes(json.loads(body))
         missing = [r for r in self.regions if r.gcp_scope and not by_scope.get(r.gcp_scope)]
         if missing:
             raise ValueError("Google 清單中找不到："
@@ -117,6 +120,24 @@ class ServerList:
         self.raw["gcp_synced"] = datetime.date.today().isoformat()
         self.save()
         return changes
+
+
+_MAX_GCP_BYTES = 20 * 1024 * 1024  # 正常約 100 KB
+
+
+def parse_gcp_prefixes(data):
+    """cloud.json -> {scope: [CIDR...]}。先驗證每一筆，避免把壞掉或異常的資料存進 servers.json。
+
+    單一網段太大（IPv4 短於 /8、IPv6 短於 /16）也拒絕：放行這種網段等於整個白名單失效。
+    """
+    by_scope = {}
+    for p in data["prefixes"]:
+        prefix = p.get("ipv4Prefix") or p.get("ipv6Prefix")
+        net = ipaddress.ip_network(prefix, strict=False)
+        if net.prefixlen < (8 if net.version == 4 else 16):
+            raise ValueError(f"Google 清單中的網段範圍異常：{prefix}")
+        by_scope.setdefault(p.get("scope"), []).append(str(net))
+    return by_scope
 
 
 def ensure_servers_file(path=SERVERS_PATH, bundled=BUNDLED_SERVERS):

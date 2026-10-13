@@ -1,4 +1,9 @@
 # 推送 v* 標籤時：跑測試、打包 RegionPin.exe、建立 GitHub Release 並附上執行檔
+#
+# 供應鏈安全：
+# - 第三方 action 固定在 commit SHA（標籤可以被改指向別的程式碼），升級時一起更新後面的版本註解
+# - uv --locked：只用 uv.lock 鎖定的版本與雜湊，鎖檔過期就失敗，不會在建置時偷偷換套件
+# - 附上 SHA256 與 GitHub 建置來源證明（attestation），使用者可以驗證 exe 確實由這個 workflow 產生
 name: Release
 
 on:
@@ -6,19 +11,37 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      contents: write      # 建立 Release
+      id-token: write      # 建置來源證明
+      attestations: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
       - name: Test
-        run: uv run python -m unittest discover -s tests
+        run: uv run --locked python -m unittest discover -s tests
       - name: Build
-        run: uv run pyinstaller --noconfirm --clean RegionPin.spec
+        run: uv run --locked pyinstaller --noconfirm --clean RegionPin.spec
+      - name: Checksum
+        run: |
+          $hash = (Get-FileHash dist/RegionPin.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  RegionPin.exe" | Out-File -Encoding ascii dist/RegionPin.exe.sha256
+          Get-Content dist/RegionPin.exe.sha256
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        # 私人 repo 要 GitHub Enterprise 才能產生證明；公開後自動啟用
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: dist/RegionPin.exe
       - name: Publish release
-        run: gh release create "${{ github.ref_name }}" dist/RegionPin.exe --title "RegionPin ${{ github.ref_name }}" --generate-notes
+        # 標籤名稱經由環境變數傳入，不直接嵌進指令（避免標籤名稱被當成指令執行）
+        run: gh release create $env:TAG dist/RegionPin.exe dist/RegionPin.exe.sha256 --title "RegionPin $env:TAG" --generate-notes
         env:
+          TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}

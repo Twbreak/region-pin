@@ -10,7 +10,26 @@
 
 - 執行時會跳出 UAC 要求系統管理員權限，這是修改防火牆的必要權限
 - 執行檔沒有數位簽章，Windows SmartScreen 可能會警告：按「其他資訊」→「仍要執行」
-- 設定（`config.json`）與伺服器清單（`servers.json`）會存在 exe 旁邊，建議放在自己的資料夾裡
+- 設定（`config.json`）與伺服器清單（`servers.json`）會存在 exe 旁邊
+- **請把 exe 移到自己的資料夾再執行，不要直接在「下載」資料夾裡執行**：程式以系統管理員身分執行，「下載」資料夾裡常有來路不明的檔案。最安全的是放在只有系統管理員能修改的位置，例如 `C:\Program Files\RegionPin\`
+
+### 確認下載的 exe 沒有被竄改
+
+每個 Release 都附有 `RegionPin.exe.sha256`，並由 GitHub Actions 產生建置來源證明。在 PowerShell 中：
+
+```
+Get-FileHash .\RegionPin.exe -Algorithm SHA256
+```
+
+結果要和 `RegionPin.exe.sha256` 的內容相同。裝有 [GitHub CLI](https://cli.github.com/) 的話，也可以確認 exe 確實是由這個專案的 workflow 建置：
+
+```
+gh attestation verify .\RegionPin.exe --repo Twbreak/region-pin
+```
+
+### 回報安全問題
+
+請不要開公開的 issue，改用 GitHub 的 [Report a vulnerability](https://github.com/Twbreak/region-pin/security/advisories/new) 私下回報。
 
 ## 跟 dropship 的差別
 
