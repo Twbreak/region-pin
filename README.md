@@ -129,6 +129,7 @@ servers.json       機房 IP 清單
 config.json        你的設定（自動產生）
 run.bat            雙擊從原始碼啟動
 pyproject.toml     專案設定（uv）
+LICENSE            MIT 授權條款
 RegionPin.spec     PyInstaller 打包設定
 .github/workflows/release.yml   推送 v* 標籤時自動打包並發布 Release
 .github/workflows/test.yml      push / pull request 時跑測試
@@ -149,3 +150,5 @@ git push origin v1.0.1
 ## 聲明
 
 本工具為非官方的個人專案，與 Blizzard Entertainment 無關。Overwatch 是 Blizzard Entertainment 的商標。本工具只修改本機的 Windows 防火牆規則，不讀取或修改遊戲檔案與記憶體。
+
+以 [MIT 授權](LICENSE) 釋出。
