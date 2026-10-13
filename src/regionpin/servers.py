@@ -69,6 +69,14 @@ class ServerList:
             r["cidrs"] = by_token[r["token"]].cidrs
         write_json(self.path, self.raw)
 
+    def days_since_sync(self, today=None):
+        """距離上次從 Google 更新過了幾天；從沒更新過（或日期格式錯誤）回傳 None。"""
+        try:
+            synced = datetime.date.fromisoformat(self.raw.get("gcp_synced", ""))
+        except (TypeError, ValueError):
+            return None
+        return ((today or datetime.date.today()) - synced).days
+
     def get(self, token):
         return next((r for r in self.regions if r.token == token), None)
 

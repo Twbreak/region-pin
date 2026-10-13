@@ -128,6 +128,34 @@ def relaunch_as_admin(args):
     return rc > 32
 
 
+class _ProcessEntry(ctypes.Structure):
+    _fields_ = [("dwSize", ctypes.c_uint32), ("cntUsage", ctypes.c_uint32),
+                ("th32ProcessID", ctypes.c_uint32), ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", ctypes.c_uint32), ("cntThreads", ctypes.c_uint32),
+                ("th32ParentProcessID", ctypes.c_uint32), ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", ctypes.c_uint32), ("szExeFile", ctypes.c_wchar * 260)]
+
+
+def is_process_running(exe_name):
+    """有沒有名稱為 exe_name 的程序在執行（不分大小寫）。直接查系統，不用啟動 PowerShell。"""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return False
+    try:
+        entry = _ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        ok = kernel32.Process32FirstW(ctypes.c_void_p(snap), ctypes.byref(entry))
+        while ok:
+            if entry.szExeFile.lower() == exe_name.lower():
+                return True
+            ok = kernel32.Process32NextW(ctypes.c_void_p(snap), ctypes.byref(entry))
+        return False
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(snap))
+
+
 def running_overwatch():
     """回傳正在執行的 Overwatch 行程 [{pid, path}]。"""
     data = run_ps_json(

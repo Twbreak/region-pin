@@ -45,8 +45,8 @@ gh attestation verify .\RegionPin.exe --repo Twbreak/region-pin
 ## 使用
 
 1. **Overwatch.exe**：通常會自動偵測（Steam 遊戲庫、Battle.net 預設位置、執行中的遊戲）
-2. **勾選允許的區域**：點一下該列就能切換
-3. **套用**：只連勾選的區域。套用後會讀回防火牆規則驗證，結果顯示在「狀態」
+2. **勾選允許的區域**：點一下該列就能切換。已套用時，和規則不同的列會標示「新增」或「移除」，並顯示「有未套用的變更」
+3. **套用**：只連勾選的區域。套用後會讀回防火牆規則驗證，結果顯示在「狀態」。Overwatch 正在執行時會先提醒：對戰中套用，而目前的機房不在允許的區域內，會斷線
 4. **解除限制**：移除規則，回到正常配對（在台灣會回到 TPE）
 5. **檢查目前連線**：在對戰中按下，會擷取 5 秒封包，顯示實際連到的伺服器屬於哪個機房（使用 Windows 內建的 `pktmon`；如果你自己也在用 pktmon，檢查時會停止你正在進行的擷取並清除篩選條件）
 6. **結束**：解除限制並關閉程式
@@ -103,7 +103,7 @@ Windows 防火牆的「封鎖」優先於「允許」，所以沒辦法寫成「
 
 ## 伺服器清單（servers.json）
 
-- 有 `gcp_scope` 的區域（日本、台灣、新加坡、美東、奧勒岡…）架在 Google Cloud 上，按「從 Google 更新伺服器清單」會從 [Google 官方清單](https://www.gstatic.com/ipranges/cloud.json) 覆寫 `cidrs`
+- 有 `gcp_scope` 的區域（日本、台灣、新加坡、美東、奧勒岡…）架在 Google Cloud 上，按「從 Google 更新伺服器清單」會從 [Google 官方清單](https://www.gstatic.com/ipranges/cloud.json) 覆寫 `cidrs`。清單超過 7 天沒更新時，開啟程式會自動更新（失敗時繼續用現有的清單）
 - `extra_cidrs`：手動補充的網段，更新時不會被覆寫
 - 沒有 `gcp_scope` 的是 Blizzard 自有機房（芝加哥、拉斯維加斯、荷蘭、澳洲），清單取自 dropship，可能過時
 - `always_allow`：永遠放行（語音聊天 Vivox、區域網路）
@@ -136,7 +136,7 @@ RegionPin.spec     PyInstaller 打包設定
 
 ## 發布新版本
 
-1. 修改 `pyproject.toml` 的 `version`；如果手動改過 `servers.json`，把它的 `version` 也加 1
+1. 修改 `pyproject.toml` 和 `src/regionpin/__init__.py` 的 `version`（兩邊不同時測試會失敗），再執行 `uv lock`；如果手動改過 `servers.json`，把它的 `version` 也加 1
 2. 建立並推送標籤，GitHub Actions 會跑測試、打包 `RegionPin.exe` 並建立 Release：
 
 ```

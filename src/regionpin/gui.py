@@ -7,12 +7,15 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from . import APP_NAME, firewall, probe, system
+from . import APP_NAME, __version__, firewall, probe, system
 from .config import CLOSE_EXIT, CLOSE_MINIMIZE, SERVERS_PATH, Config
 from .servers import ServerList
 
 CHECK = "✔"
 OK_COLOR, WARN_COLOR, BAD_COLOR, IDLE_COLOR = "#1a7f37", "#9a6700", "#cf222e", "#57606a"
+TITLE = f"{APP_NAME} v{__version__}"
+UI_FONT = "Microsoft JhengHei UI"
+STALE_DAYS = 7  # 伺服器清單超過這麼多天沒更新，啟動時自動從 Google 更新
 
 
 class App:
@@ -28,11 +31,13 @@ class App:
         self.quitting = False   # 已按下結束：等目前的工作完成後解除限制並關閉
         self.closed = False
         self.minimize_hinted = False
+        self.actual = None      # 規則目前放行的區域代號（沒有規則時為 None）
 
-        root.title(APP_NAME)
-        root.minsize(620, 680)
+        root.title(TITLE)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        ttk.Style().configure("Pending.TButton", font=(UI_FONT, 10, "bold"), foreground=WARN_COLOR)
         self._build()
+        self._show_details(self.cfg.show_details)
         if notice:
             self.log(notice)
         unknown = self.cfg.drop_unknown(self.servers)
@@ -69,12 +74,14 @@ class App:
         f.pack(fill="both", expand=True, **pad)
         cols = ("allow", "name", "token", "ping", "ips")
         self.tree = ttk.Treeview(f, columns=cols, show="headings", height=11, selectmode="none")
-        for c, text, w, anchor in (("allow", "允許", 50, "center"), ("name", "區域", 190, "w"),
+        for c, text, w, anchor in (("allow", "允許", 70, "center"), ("name", "區域", 190, "w"),
                                    ("token", "代號", 80, "w"), ("ping", "Ping", 80, "e"),
                                    ("ips", "IP 段數", 70, "e")):
             self.tree.heading(c, text=text)
             self.tree.column(c, width=w, anchor=anchor, stretch=(c == "name"))
         self.tree.pack(fill="both", expand=True, padx=6, pady=(6, 2))
+        self.tree.tag_configure("adding", foreground=WARN_COLOR)
+        self.tree.tag_configure("removing", foreground=BAD_COLOR)
         self.tree.bind("<Button-1>", self._toggle_region)
         row = ttk.Frame(f)
         row.pack(fill="x", padx=6, pady=(2, 6))
@@ -82,6 +89,11 @@ class App:
         self.btn_ping.pack(side="left")
         self.btn_update = ttk.Button(row, text="從 Google 更新伺服器清單", command=self.update_servers)
         self.btn_update.pack(side="left", padx=6)
+        self.sync_var = tk.StringVar()
+        ttk.Label(row, textvariable=self.sync_var, foreground=IDLE_COLOR).pack(side="left")
+        self.pending_var = tk.StringVar()
+        tk.Label(row, textvariable=self.pending_var, fg=WARN_COLOR,
+                 font=(UI_FONT, 9, "bold")).pack(side="right")
 
         f = ttk.Frame(main)
         f.pack(fill="x", **pad)
@@ -96,7 +108,7 @@ class App:
         f.pack(fill="x", **pad)
         self.status_var = tk.StringVar(value="讀取中…")
         self.status_lbl = tk.Label(f, textvariable=self.status_var, anchor="w", justify="left",
-                                   font=("Microsoft JhengHei UI", 11, "bold"))
+                                   font=(UI_FONT, 11, "bold"))
         self.status_lbl.pack(fill="x", padx=6, pady=(6, 0))
         self.detail_var = tk.StringVar()
         ttk.Label(f, textvariable=self.detail_var, justify="left", wraplength=560).pack(fill="x", padx=6, pady=(0, 6))
@@ -111,9 +123,13 @@ class App:
         self.conn_lbl = tk.Label(f, textvariable=self.conn_var, anchor="w", justify="left", wraplength=560)
         self.conn_lbl.pack(fill="x", padx=6, pady=(0, 6))
 
-        f = ttk.LabelFrame(main, text="紀錄")
-        f.pack(fill="both", expand=True, **pad)
-        self.log_box = ScrolledText(f, height=7, state="disabled", font=("Consolas", 9))
+        self.details_var = tk.BooleanVar(value=self.cfg.show_details)
+        ttk.Checkbutton(main, text="顯示詳細資訊（紀錄、IP 段數）", variable=self.details_var,
+                        command=lambda: self._show_details(self.details_var.get(), save=True)
+                        ).pack(anchor="w", padx=10, pady=(2, 0))
+        self.log_frame = ttk.LabelFrame(main, text="紀錄")
+        self.log_pad = pad
+        self.log_box = ScrolledText(self.log_frame, height=7, state="disabled", font=("Consolas", 9))
         self.log_box.pack(fill="both", expand=True, padx=6, pady=6)
 
         self.buttons = [self.btn_ping, self.btn_update, self.btn_apply, self.btn_remove, self.btn_check]
@@ -135,20 +151,65 @@ class App:
                             command=self._save_close_action).pack(anchor="w", padx=6, pady=2)
         ttk.Frame(f).pack(pady=2)
 
+        ttk.Label(parent, text=TITLE, foreground=IDLE_COLOR).pack(side="bottom", anchor="e", padx=10, pady=4)
+
     def _save_close_action(self):
         self.cfg.close_action = self.close_var.get()
         self.cfg.save()
+
+    def _show_details(self, show, save=False):
+        """「紀錄」與「IP 段數」對一般使用者是雜訊，預設收起來。"""
+        if show:
+            self.log_frame.pack(fill="both", expand=True, **self.log_pad)
+            self.tree.configure(displaycolumns=("allow", "name", "token", "ping", "ips"))
+        else:
+            self.log_frame.pack_forget()
+            self.tree.configure(displaycolumns=("allow", "name", "token", "ping"))
+        # 最小尺寸跟著內容算，收起紀錄時視窗才不會留一大塊空白、展開時也不會被切掉
+        self.root.minsize(620, 1)
+        self.root.update_idletasks()
+        self.root.minsize(620, self.root.winfo_reqheight())
+        if save:
+            self.cfg.show_details = show
+            self.cfg.save()
 
     def _fill_regions(self):
         self.tree.delete(*self.tree.get_children())
         for r in self.servers.regions:
             ping = self.pings.get(r.token)
             self.tree.insert("", "end", iid=r.token, values=(
-                CHECK if r.token in self.cfg.allowed else "",
-                r.name, r.token,
+                "", r.name, r.token,
                 "測量中…" if ping == "…" else ("無法測" if r.token in self.pings and ping is None
                                               else (f"{ping} ms" if ping is not None else "")),
                 len(r.all_cidrs) or "無"))
+        self._update_marks()
+        self._update_sync_label()
+
+    def _update_marks(self):
+        """「允許」欄：有規則時標出勾選和規則不同的列（新增／移除），讓未套用的變更一眼看得出來。"""
+        for r in self.servers.regions:
+            selected = r.token in self.cfg.allowed
+            if self.actual is None or selected == (r.token in self.actual):
+                text, tags = (CHECK if selected else ""), ()
+            else:
+                text, tags = (f"{CHECK} 新增", ("adding",)) if selected else ("移除", ("removing",))
+            if self.tree.exists(r.token):
+                self.tree.item(r.token, tags=tags)
+                self.tree.set(r.token, "allow", text)
+
+    def _update_sync_label(self, failed=False):
+        days = self.servers.days_since_sync()
+        if days is None:
+            text = "清單尚未從 Google 更新"
+        elif days <= 0:
+            text = "清單今天更新"
+        else:
+            text = f"清單更新於 {days} 天前"
+        self.sync_var.set(text + ("（自動更新失敗）" if failed else ""))
+
+    def _set_apply(self, text, pending=False):
+        self.btn_apply.configure(text=text, style="Pending.TButton" if pending else "TButton")
+        self.pending_var.set("● 有未套用的變更" if pending else "")
 
     def _toggle_region(self, event):
         if self.tree.identify_region(event.x, event.y) != "cell":
@@ -161,8 +222,8 @@ class App:
         else:
             self.cfg.allowed.append(token)
         self.cfg.save()
-        self._fill_regions()
         self._render_status()
+        self._update_marks()
 
     def log(self, msg):
         self.log_box.configure(state="normal")
@@ -244,7 +305,10 @@ class App:
                 return  # 之後又發出了新的讀取，這筆已經過時
             if err:
                 self.fw = None
-                self.root.title(APP_NAME)
+                self.actual = None
+                self.root.title(TITLE)
+                self._set_apply("套用：只連勾選的區域")
+                self._update_marks()
                 self._set_status("無法讀取防火牆狀態", BAD_COLOR, str(err))
                 self.log(f"讀取狀態失敗：{err}")
                 return
@@ -256,16 +320,24 @@ class App:
         """用最後讀到的防火牆狀態，對照目前的勾選與程式路徑顯示結果。不會呼叫 PowerShell。"""
         if self.fw is None:
             return
-        state, profiles = self.fw
+        try:
+            self._render_rule(*self.fw)
+        finally:
+            self._update_marks()
+
+    def _render_rule(self, state, profiles):
         fw_problem = profiles.problems()
+        self.actual = None
+        self._set_apply("套用：只連勾選的區域")
         if not state.exists:
-            self.root.title(APP_NAME)
+            self.root.title(TITLE)
             self._set_status("未限制：正常配對（會自動選最近的機房，例如 TPE）", IDLE_COLOR, fw_problem)
             return
         actual = firewall.allowed_regions(state, self.servers)
+        self.actual = {r.token for r in actual}
         names = "、".join(f"{r.name} ({r.token})" for r in actual) or "（沒有任何已知區域）"
         # 狀態放在前面：縮到工作列時標題會被截斷
-        self.root.title(f"鎖定中：{'、'.join(r.name for r in actual) or '未知'} — {APP_NAME}")
+        self.root.title(f"鎖定中：{'、'.join(r.name for r in actual) or '未知'} — {TITLE}")
         if fw_problem:
             self._set_status("規則存在但沒有生效", BAD_COLOR, fw_problem)
             return
@@ -278,14 +350,17 @@ class App:
         if v.ok:
             self._set_status(f"已生效：只能連到 {names}", OK_COLOR, f"規則：{state.program}")
         elif v.problems:
+            self._set_apply("重新套用規則", pending=True)
             self._set_status(f"已限制為 {names}，但規則有問題", BAD_COLOR,
-                             "；".join(v.messages()) + "。按「套用」重建規則。")
-        elif {r.token for r in actual} == set(tokens):
+                             "；".join(v.messages()) + "。按「重新套用規則」重建規則。")
+        elif self.actual == set(tokens):
+            self._set_apply("套用：更新規則的 IP 範圍", pending=True)
             self._set_status(f"已限制為 {names}，但伺服器清單已更新", WARN_COLOR,
                              "規則裡的 IP 範圍是舊的，按「套用」更新規則。")
         else:
+            self._set_apply("套用變更", pending=True)
             self._set_status(f"已限制為 {names}，與目前勾選不同", WARN_COLOR,
-                             "按「套用」改成目前勾選的區域。")
+                             "按「套用變更」改成目前勾選的區域。")
 
     def _set_status(self, text, color, detail=""):
         self.status_var.set(text)
@@ -315,6 +390,9 @@ class App:
             elif names:
                 self.log(f"已清除先前留下的規則（只能連到 {names}），可能是上次沒有正常結束")
             self.refresh_status()
+            days = self.servers.days_since_sync()
+            if days is None or days > STALE_DAYS:
+                self.update_servers(auto=True)
         self.run_task("", work, done)
 
     def on_close(self):
@@ -362,6 +440,11 @@ class App:
         if not program:
             messagebox.showwarning(APP_NAME, "請先指定 Overwatch.exe 的位置。")
             return
+        if self._overwatch_running() and not messagebox.askyesno(APP_NAME, (
+                "Overwatch 正在執行。\n\n"
+                "如果正在對戰，而目前連到的機房不在允許的區域內，套用後會斷線。\n"
+                "在主選單套用沒有影響。\n\n要繼續套用嗎？"), icon="warning"):
+            return
         names = "、".join(self.servers.get(t).name for t in tokens)
         if program != self.cfg.program:
             self.cfg.program = program
@@ -378,6 +461,13 @@ class App:
                 messagebox.showerror(APP_NAME, "規則建立了，但驗證不通過：\n" + "\n".join(v.messages()))
             self.refresh_status()
         self.run_task(f"套用中：只允許 {names}…", lambda: firewall.apply_rule(program, cidrs), done)
+
+    @staticmethod
+    def _overwatch_running():
+        try:
+            return system.is_process_running("Overwatch.exe")
+        except OSError:
+            return False  # 查不到就不提醒，不擋使用者套用
 
     def remove(self):
         def done(_, err):
@@ -413,11 +503,15 @@ class App:
             self._fill_regions()
         self.run_task("", work, done, exclusive=False)
 
-    def update_servers(self):
+    def update_servers(self, auto=False):
+        """auto：啟動時因為清單過期而自動更新，失敗時不跳出視窗，繼續用現有的清單。"""
         def done(changes, err):
             if err:
-                self.log(f"更新失敗：{err}")
-                messagebox.showerror(APP_NAME, f"更新伺服器清單失敗：\n{err}")
+                self.log(f"{'自動' if auto else ''}更新伺服器清單失敗：{err}")
+                if auto:
+                    self._update_sync_label(failed=True)
+                else:
+                    messagebox.showerror(APP_NAME, f"更新伺服器清單失敗：\n{err}")
                 return
             for token, (old, new) in changes.items():
                 if old != new:
@@ -425,7 +519,8 @@ class App:
             self.log("伺服器清單已從 Google 官方來源更新")
             self._fill_regions()
             self._render_status()
-        self.run_task("從 Google 下載 IP 清單…", self.servers.update_from_gcp, done)
+        label = "伺服器清單已超過一週沒更新，自動從 Google 下載…" if auto else "從 Google 下載 IP 清單…"
+        self.run_task(label, self.servers.update_from_gcp, done)
 
     def check_connection(self):
         def work():

@@ -35,6 +35,7 @@ class Config:
     program: str = ""
     allowed: list = field(default_factory=lambda: ["gtk1"])
     close_action: str = CLOSE_EXIT   # 按視窗的 X：exit = 解除限制並結束；minimize = 縮小到工作列
+    show_details: bool = False       # 主畫面顯示「紀錄」與「IP 段數」
 
     @classmethod
     def load(cls, path=CONFIG_PATH):
@@ -44,7 +45,8 @@ class Config:
             return cls()
         close = data.get("close_action", CLOSE_EXIT)
         return cls(program=data.get("program", ""), allowed=list(data.get("allowed", ["gtk1"])),
-                   close_action=close if close in (CLOSE_EXIT, CLOSE_MINIMIZE) else CLOSE_EXIT)
+                   close_action=close if close in (CLOSE_EXIT, CLOSE_MINIMIZE) else CLOSE_EXIT,
+                   show_details=data.get("show_details") is True)
 
     def save(self, path=CONFIG_PATH):
         write_json(path, asdict(self))
