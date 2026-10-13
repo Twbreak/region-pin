@@ -130,9 +130,11 @@ config.json        你的設定（自動產生）
 run.bat            雙擊從原始碼啟動
 pyproject.toml     專案設定（uv）
 LICENSE            GPL-3.0 授權條款
+SECURITY.md        安全政策與回報方式
 RegionPin.spec     PyInstaller 打包設定
 .github/workflows/release.yml   推送 v* 標籤時自動打包並發布 Release
 .github/workflows/test.yml      push / pull request 時跑測試
+.github/dependabot.yml          每週檢查 action 與打包工具的更新
 ```
 
 ## 發布新版本

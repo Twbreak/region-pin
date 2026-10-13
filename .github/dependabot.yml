@@ -1,0 +1,19 @@
+# 每週檢查相依套件更新
+#
+# - github-actions：workflow 裡的 action 固定在 commit SHA，Dependabot 會連同後面的版本註解一起更新
+# - uv：uv.lock 鎖定的打包工具（PyInstaller 等），會一起打包進 exe
+# - cooldown：新版本發布 7 天後才提出更新，避開剛發布就被發現有問題或遭竄改的版本
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
