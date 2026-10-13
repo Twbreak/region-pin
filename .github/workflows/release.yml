@@ -1,0 +1,24 @@
+# 推送 v* 標籤時：跑測試、打包 RegionPin.exe、建立 GitHub Release 並附上執行檔
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Test
+        run: uv run python -m unittest discover -s tests
+      - name: Build
+        run: uv run pyinstaller --noconfirm --clean RegionPin.spec
+      - name: Publish release
+        run: gh release create "${{ github.ref_name }}" dist/RegionPin.exe --title "RegionPin ${{ github.ref_name }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

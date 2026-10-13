@@ -1,4 +1,4 @@
-"""OW 伺服器鎖定 — 進入點。
+"""RegionPin 機房鎖定 — 進入點。
 
 不帶參數：開啟圖形介面（會自動要求系統管理員權限）。
 命令列：
@@ -13,12 +13,13 @@
 import argparse
 import sys
 
-from owlock import APP_NAME, firewall, probe, system
-from owlock.config import SERVERS_PATH, Config
-from owlock.servers import ServerList
+from regionpin import APP_NAME, firewall, probe, system
+from regionpin.config import SERVERS_PATH, Config, ensure_servers_file
+from regionpin.servers import ServerList
 
 
 def main(argv):
+    ensure_servers_file()
     if not argv:
         return gui()
     p = argparse.ArgumentParser(prog="main.py", description=APP_NAME)
@@ -105,7 +106,7 @@ def gui():
             mb.showerror(APP_NAME, "需要系統管理員權限才能修改防火牆。")
             return 1
         return 0
-    from owlock.gui import run
+    from regionpin.gui import run
     run()
     return 0
 

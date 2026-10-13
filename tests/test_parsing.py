@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from owlock.config import SERVERS_PATH
-from owlock.firewall import RuleState, allowed_regions
-from owlock.probe import parse_flows, parse_ping
-from owlock.ranges import block_list
-from owlock.servers import ServerList
-from owlock.system import parse_libraryfolders
+from regionpin.config import SERVERS_PATH
+from regionpin.firewall import RuleState, allowed_regions
+from regionpin.probe import parse_flows, parse_ping
+from regionpin.ranges import block_list
+from regionpin.servers import ServerList
+from regionpin.system import parse_libraryfolders
 
 PING_ZH = """
 Ping 34.84.0.0 (使用 32 位元組的資料):
@@ -47,7 +47,7 @@ class ParsingTest(unittest.TestCase):
 
 class ProgramGuardTest(unittest.TestCase):
     def test_rejects_empty_and_other_programs(self):
-        from owlock.firewall import check_program
+        from regionpin.firewall import check_program
         for bad in ("", "   ", r"C:\Windows\System32\svchost.exe", r"C:\Games\Overwatch\Launcher.exe"):
             with self.assertRaises(ValueError):
                 check_program(bad)
@@ -55,7 +55,7 @@ class ProgramGuardTest(unittest.TestCase):
             check_program(r"Z:\nope\Overwatch.exe")
 
     def test_verify_flags_rule_without_program(self):
-        from owlock.firewall import verify
+        from regionpin.firewall import verify
         cidrs = ["34.84.0.0/16"]
         state = RuleState(True, 1, True, "Block", "Outbound", "UDP", "Any", block_list(cidrs))
         v = verify(r"T:\x\Overwatch.exe", cidrs, state)

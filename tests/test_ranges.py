@@ -2,7 +2,7 @@ import ipaddress
 import random
 import unittest
 
-from owlock.ranges import (block_intervals, block_list, complement, entries_to_intervals,
+from regionpin.ranges import (block_intervals, block_list, complement, entries_to_intervals,
                            merge, parse_entry)
 
 

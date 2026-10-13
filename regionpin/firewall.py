@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass, field
 
-from . import LEGACY_RULE_NAMES, RULE_NAME
+from . import LEGACY_RULE_GROUPS, LEGACY_RULE_NAMES, RULE_GROUP, RULE_NAME
 from .ranges import block_intervals, cidrs_to_intervals, entries_to_intervals, interval_to_str
 from .system import ps_quote, run_ps, run_ps_json
 
@@ -94,8 +94,8 @@ def apply_rule(program, allow_cidrs):
     addr_literal = ",".join(ps_quote(a) for a in addresses)
     run_ps(f"""
 {_REMOVE_OURS}
-New-NetFirewallRule -DisplayName {ps_quote(RULE_NAME)} -Group 'OWLock' `
-    -Description '由 OW 伺服器鎖定建立：封鎖 Overwatch 連到白名單以外的 UDP 位址' `
+New-NetFirewallRule -DisplayName {ps_quote(RULE_NAME)} -Group {ps_quote(RULE_GROUP)} `
+    -Description '由 RegionPin 建立：封鎖遊戲連到白名單以外的 UDP 位址' `
     -Direction Outbound -Action Block -Protocol UDP -Profile Any -Enabled True `
     -Program {ps_quote(program)} -RemoteAddress @({addr_literal}) | Out-Null
 """)
@@ -114,23 +114,24 @@ def check_program(program):
 
 # 依精確名稱或群組刪除本工具建立的規則；Windows 自動建立的「Overwatch Application」不會被動到
 _OUR_NAMES = ",".join(ps_quote(n) for n in [RULE_NAME] + LEGACY_RULE_NAMES)
+_OUR_GROUPS = ",".join(ps_quote(g) for g in [RULE_GROUP] + LEGACY_RULE_GROUPS)
 _REMOVE_OURS = f"""
 Get-NetFirewallRule -DisplayName @({_OUR_NAMES}) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-Get-NetFirewallRule -Group 'OWLock' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Get-NetFirewallRule -Group @({_OUR_GROUPS}) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 """
 
 
 def count_our_rules():
     return int(run_ps(f"""
 $n = @(Get-NetFirewallRule -DisplayName @({_OUR_NAMES}) -ErrorAction SilentlyContinue).Count
-$n += @(Get-NetFirewallRule -Group 'OWLock' -ErrorAction SilentlyContinue |
+$n += @(Get-NetFirewallRule -Group @({_OUR_GROUPS}) -ErrorAction SilentlyContinue |
         Where-Object {{ @({_OUR_NAMES}) -notcontains $_.DisplayName }}).Count
 $n
 """).strip())
 
 
 def remove_rule():
-    """移除本工具建立的所有規則（含舊版腳本），並確認一條都不剩。"""
+    """移除本工具建立的所有規則（含改名前的舊版），並確認一條都不剩。"""
     run_ps(_REMOVE_OURS)
     left = count_our_rules()
     if left:
@@ -169,7 +170,7 @@ def verify(program, allow_cidrs, state=None):
     if not state.exists:
         return Verification(False, ["防火牆中沒有這條規則"])
     if state.name != RULE_NAME:
-        problems.append(f"目前是舊版腳本建立的規則（{state.name}）")
+        problems.append(f"目前是舊版建立的規則（{state.name}），請重新套用")
     if state.count > 1:
         problems.append(f"有 {state.count} 條規則")
     if not state.enabled:

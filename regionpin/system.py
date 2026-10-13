@@ -72,13 +72,17 @@ def is_admin():
 def relaunch_as_admin(args):
     """以系統管理員身分重新啟動自己。成功送出 UAC 要求回傳 True。"""
     exe = sys.executable
-    pythonw = Path(exe).with_name("pythonw.exe")
-    if pythonw.exists():
-        exe = str(pythonw)
-    script = str(Path(sys.argv[0]).resolve())
-    params = subprocess.list2cmdline([script] + list(args))
-    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params,
-                                             str(Path(script).parent), 1)
+    if getattr(sys, "frozen", False):
+        params = subprocess.list2cmdline(list(args))
+        workdir = str(Path(exe).parent)
+    else:
+        pythonw = Path(exe).with_name("pythonw.exe")
+        if pythonw.exists():
+            exe = str(pythonw)
+        script = str(Path(sys.argv[0]).resolve())
+        params = subprocess.list2cmdline([script] + list(args))
+        workdir = str(Path(script).parent)
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, workdir, 1)
     return rc > 32
 
 

@@ -58,12 +58,12 @@ def capture_flows(local_ports, seconds=5):
     需要系統管理員權限。只記錄每個封包前 64 位元組（標頭），不記錄內容。
     """
     ports = {str(p) for p in local_ports}
-    with tempfile.TemporaryDirectory(prefix="owlock-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="regionpin-") as tmp:
         etl, txt = Path(tmp) / "cap.etl", Path(tmp) / "cap.txt"
         _pktmon("stop", check=False)
         _pktmon("filter", "remove", check=False)
         try:
-            _pktmon("filter", "add", "OWLock", "-t", "UDP")
+            _pktmon("filter", "add", "RegionPin", "-t", "UDP")
             _pktmon("start", "--capture", "--comp", "nics", "--pkt-size", "64",
                     "--file-name", str(etl))
             time.sleep(seconds)
