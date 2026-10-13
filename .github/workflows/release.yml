@@ -32,7 +32,8 @@ jobs:
       - name: Checksum
         run: |
           $hash = (Get-FileHash dist/RegionPin.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  RegionPin.exe" | Out-File -Encoding ascii dist/RegionPin.exe.sha256
+          # 用 LF 換行，sha256sum -c 才讀得懂（Out-File 會寫成 CRLF）
+          [IO.File]::WriteAllText("$PWD/dist/RegionPin.exe.sha256", "$hash  RegionPin.exe`n")
           Get-Content dist/RegionPin.exe.sha256
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         # 私人 repo 要 GitHub Enterprise 才能產生證明；公開後自動啟用
