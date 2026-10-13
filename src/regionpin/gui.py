@@ -16,18 +16,27 @@ OK_COLOR, WARN_COLOR, BAD_COLOR, IDLE_COLOR = "#1a7f37", "#9a6700", "#cf222e", "
 
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, notice=""):
         self.root = root
         self.cfg = Config.load()
         self.servers = ServerList.load(SERVERS_PATH)
         self.pings = {}
         self.busy = False
         self.results = queue.Queue()
+        self.fw = None          # 最後讀到的 (RuleState, FirewallProfiles)
+        self.status_seq = 0     # 只採用最新一次讀取的結果
 
         root.title(APP_NAME)
         root.minsize(620, 640)
         self._build()
+        if notice:
+            self.log(notice)
+        unknown = self.cfg.drop_unknown(self.servers)
+        if unknown:
+            self.cfg.save()
+            self.log("設定中的區域已不在伺服器清單內，已移除：" + "、".join(unknown))
         self._fill_regions()
+        self.program_var.trace_add("write", lambda *_: self._render_status())
         if not self.cfg.program:
             self.detect_program(quiet=True)
         self.root.after(100, self._poll)
@@ -121,7 +130,7 @@ class App:
             self.cfg.allowed.append(token)
         self.cfg.save()
         self._fill_regions()
-        self.refresh_status()
+        self._render_status()
 
     def log(self, msg):
         self.log_box.configure(state="normal")
@@ -176,7 +185,6 @@ class App:
             self.cfg.program = paths[0]
             self.cfg.save()
             self.log(f"找到 Overwatch：{paths[0]}")
-            self.refresh_status()
         self.run_task("", system.find_overwatch_paths, done, exclusive=False)
 
     def browse_program(self):
@@ -186,44 +194,58 @@ class App:
             self.program_var.set(path.replace("/", "\\"))
             self.cfg.program = self.program_var.get()
             self.cfg.save()
-            self.refresh_status()
 
     def refresh_status(self):
-        program = self.program_var.get().strip()
-        tokens = list(self.cfg.allowed)
+        """重新讀取防火牆狀態（背景執行）。"""
+        self.status_seq += 1
+        seq = self.status_seq
 
         def work():
-            state = firewall.read_rule()
-            profiles = firewall.read_profiles()
-            info = {"state": state, "profiles": profiles}
-            if state.exists:
-                info["actual"] = firewall.allowed_regions(state, self.servers)
-                try:
-                    info["verify"] = firewall.verify(program, self.servers.allow_cidrs(tokens), state)
-                except ValueError as e:
-                    info["verify"] = firewall.Verification(False, [str(e)])
-            return info
+            return firewall.read_rule(), firewall.read_profiles()
 
-        def done(info, err):
+        def done(fw, err):
+            if seq != self.status_seq:
+                return  # 之後又發出了新的讀取，這筆已經過時
             if err:
-                self._set_status(f"無法讀取防火牆狀態", BAD_COLOR, str(err))
+                self.fw = None
+                self._set_status("無法讀取防火牆狀態", BAD_COLOR, str(err))
                 self.log(f"讀取狀態失敗：{err}")
                 return
-            state, profiles = info["state"], info["profiles"]
-            fw_problem = profiles.problems()
-            if not state.exists:
-                self._set_status("未限制：正常配對（會自動選最近的機房，例如 TPE）", IDLE_COLOR, fw_problem)
-                return
-            names = "、".join(f"{r.name} ({r.token})" for r in info["actual"]) or "（沒有任何已知區域）"
-            v = info["verify"]
-            if fw_problem:
-                self._set_status(f"規則存在但沒有生效", BAD_COLOR, fw_problem)
-            elif v.ok:
-                self._set_status(f"已生效：只能連到 {names}", OK_COLOR, f"規則：{state.program}")
-            else:
-                self._set_status(f"已限制為 {names}，但與目前勾選不同",
-                                 WARN_COLOR, "；".join(v.problems) + "。按「套用」更新規則。")
+            self.fw = fw
+            self._render_status()
         self.run_task("", work, done, exclusive=False)
+
+    def _render_status(self):
+        """用最後讀到的防火牆狀態，對照目前的勾選與程式路徑顯示結果。不會呼叫 PowerShell。"""
+        if self.fw is None:
+            return
+        state, profiles = self.fw
+        fw_problem = profiles.problems()
+        if not state.exists:
+            self._set_status("未限制：正常配對（會自動選最近的機房，例如 TPE）", IDLE_COLOR, fw_problem)
+            return
+        actual = firewall.allowed_regions(state, self.servers)
+        names = "、".join(f"{r.name} ({r.token})" for r in actual) or "（沒有任何已知區域）"
+        if fw_problem:
+            self._set_status("規則存在但沒有生效", BAD_COLOR, fw_problem)
+            return
+        tokens = list(self.cfg.allowed)
+        try:
+            v = firewall.verify(self.program_var.get().strip(), self.servers.allow_cidrs(tokens), state)
+        except ValueError as e:
+            self._set_status(f"已限制為 {names}", WARN_COLOR, f"目前的勾選無法套用：{e}")
+            return
+        if v.ok:
+            self._set_status(f"已生效：只能連到 {names}", OK_COLOR, f"規則：{state.program}")
+        elif v.problems:
+            self._set_status(f"已限制為 {names}，但規則有問題", BAD_COLOR,
+                             "；".join(v.messages()) + "。按「套用」重建規則。")
+        elif {r.token for r in actual} == set(tokens):
+            self._set_status(f"已限制為 {names}，但伺服器清單已更新", WARN_COLOR,
+                             "規則裡的 IP 範圍是舊的，按「套用」更新規則。")
+        else:
+            self._set_status(f"已限制為 {names}，與目前勾選不同", WARN_COLOR,
+                             "按「套用」改成目前勾選的區域。")
 
     def _set_status(self, text, color, detail=""):
         self.status_var.set(text)
@@ -242,16 +264,19 @@ class App:
             messagebox.showwarning(APP_NAME, "請先指定 Overwatch.exe 的位置。")
             return
         names = "、".join(self.servers.get(t).name for t in tokens)
+        if program != self.cfg.program:
+            self.cfg.program = program
+            self.cfg.save()
 
         def done(v, err):
             if err:
                 self.log(f"套用失敗：{err}")
-                messagebox.showerror(APP_NAME, f"套用失敗：\n{err}")
+                messagebox.showerror(APP_NAME, f"套用失敗：\n{err}\n\n目前實際的限制請看「狀態」。")
             elif v.ok:
                 self.log(f"已套用並驗證：只允許 {names}")
             else:
-                self.log("套用後驗證失敗：" + "；".join(v.problems))
-                messagebox.showerror(APP_NAME, "規則建立了，但驗證不通過：\n" + "\n".join(v.problems))
+                self.log("套用後驗證失敗：" + "；".join(v.messages()))
+                messagebox.showerror(APP_NAME, "規則建立了，但驗證不通過：\n" + "\n".join(v.messages()))
             self.refresh_status()
         self.run_task(f"套用中：只允許 {names}…", lambda: firewall.apply_rule(program, cidrs), done)
 
@@ -300,7 +325,7 @@ class App:
                     self.log(f"{self.servers.get(token).name}：{old} → {new} 段")
             self.log("伺服器清單已從 Google 官方來源更新")
             self._fill_regions()
-            self.refresh_status()
+            self._render_status()
         self.run_task("從 Google 下載 IP 清單…", self.servers.update_from_gcp, done)
 
     def check_connection(self):
@@ -337,11 +362,11 @@ class App:
         self.conn_lbl.configure(fg=color)
 
 
-def run():
+def run(notice=""):
     root = tk.Tk()
     try:
         ttk.Style().theme_use("vista")
     except tk.TclError:
         pass
-    App(root)
+    App(root, notice)
     root.mainloop()

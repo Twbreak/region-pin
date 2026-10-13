@@ -35,8 +35,15 @@ class FirewallProfiles:
 
 @dataclass
 class Verification:
-    ok: bool
-    problems: list
+    problems: list                # 規則本身的問題：不存在、停用、程式路徑不同…
+    range_mismatch: bool = False  # 封鎖範圍與預期不同：勾選改了，或伺服器清單更新了
+
+    @property
+    def ok(self):
+        return not self.problems and not self.range_mismatch
+
+    def messages(self):
+        return self.problems + (["封鎖範圍與目前選擇的區域不一致"] if self.range_mismatch else [])
 
 
 def read_rule():
@@ -87,17 +94,20 @@ $active = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue |
 
 
 def apply_rule(program, allow_cidrs):
-    """建立（或取代）封鎖規則，並讀回驗證。回傳 Verification。"""
+    """建立（或取代）封鎖規則，並讀回驗證。回傳 Verification。
+
+    先建立新規則、成功後才刪除舊的：建立失敗時原本的限制仍然有效，不會變成完全沒限制。
+    """
     check_program(program)
     blocks = block_intervals(allow_cidrs)
     addresses = [interval_to_str(s, e, v) for v in (4, 6) for s, e in blocks[v]]
     addr_literal = ",".join(ps_quote(a) for a in addresses)
     run_ps(f"""
-{_REMOVE_OURS}
-New-NetFirewallRule -DisplayName {ps_quote(RULE_NAME)} -Group {ps_quote(RULE_GROUP)} `
+$new = New-NetFirewallRule -DisplayName {ps_quote(RULE_NAME)} -Group {ps_quote(RULE_GROUP)} `
     -Description '由 RegionPin 建立：封鎖遊戲連到白名單以外的 UDP 位址' `
     -Direction Outbound -Action Block -Protocol UDP -Profile Any -Enabled True `
-    -Program {ps_quote(program)} -RemoteAddress @({addr_literal}) | Out-Null
+    -Program {ps_quote(program)} -RemoteAddress @({addr_literal})
+{_remove_ours(keep="$new.Name")}
 """)
     return verify(program, allow_cidrs)
 
@@ -115,9 +125,14 @@ def check_program(program):
 # 依精確名稱或群組刪除本工具建立的規則；Windows 自動建立的「Overwatch Application」不會被動到
 _OUR_NAMES = ",".join(ps_quote(n) for n in [RULE_NAME] + LEGACY_RULE_NAMES)
 _OUR_GROUPS = ",".join(ps_quote(g) for g in [RULE_GROUP] + LEGACY_RULE_GROUPS)
-_REMOVE_OURS = f"""
-Get-NetFirewallRule -DisplayName @({_OUR_NAMES}) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-Get-NetFirewallRule -Group @({_OUR_GROUPS}) -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+
+
+def _remove_ours(keep=None):
+    """刪除本工具規則的 PowerShell 片段；keep 是要保留的規則 Name（PowerShell 運算式）。"""
+    where = f" | Where-Object {{ $_.Name -ne {keep} }}" if keep else ""
+    return f"""
+Get-NetFirewallRule -DisplayName @({_OUR_NAMES}) -ErrorAction SilentlyContinue{where} | Remove-NetFirewallRule
+Get-NetFirewallRule -Group @({_OUR_GROUPS}) -ErrorAction SilentlyContinue{where} | Remove-NetFirewallRule
 """
 
 
@@ -132,35 +147,42 @@ $n
 
 def remove_rule():
     """移除本工具建立的所有規則（含改名前的舊版），並確認一條都不剩。"""
-    run_ps(_REMOVE_OURS)
+    run_ps(_remove_ours())
     left = count_our_rules()
     if left:
         raise RuntimeError(f"移除後仍有 {left} 條規則殘留")
 
 
 def allowed_regions(state, servers):
-    """從防火牆實際的封鎖範圍反推：哪些區域的 IP 完全沒被擋。"""
+    """從防火牆實際的封鎖範圍反推：哪些區域的 IP 大部分沒被擋。
+
+    用「大部分」而不是「全部」：伺服器清單更新後，新增的網段在舊規則裡是被擋的，
+    這時仍要認得出規則原本放行的是哪個區域。只看 IPv4（沒有 IPv4 才看 IPv6），
+    因為 IPv6 的位址數會壓過 IPv4。
+    """
     blocks = entries_to_intervals(state.remote)
     allowed = []
     for region in servers.regions:
-        if not region.all_cidrs:
-            continue
         mine = cidrs_to_intervals(region.all_cidrs)
-        if not any(_overlap(mine[v], blocks[v]) for v in (4, 6)):
+        v = 4 if mine[4] else 6
+        total = sum(e - s + 1 for s, e in mine[v])
+        if total and _overlap_size(mine[v], blocks[v]) * 2 < total:
             allowed.append(region)
     return allowed
 
 
-def _overlap(a, b):
-    i = j = 0
+def _overlap_size(a, b):
+    """兩組已排序、已合併的區段重疊的位址數。"""
+    i = j = size = 0
     while i < len(a) and j < len(b):
-        if a[i][1] < b[j][0]:
+        lo, hi = max(a[i][0], b[j][0]), min(a[i][1], b[j][1])
+        if lo <= hi:
+            size += hi - lo + 1
+        if a[i][1] < b[j][1]:
             i += 1
-        elif b[j][1] < a[i][0]:
-            j += 1
         else:
-            return True
-    return False
+            j += 1
+    return size
 
 
 def verify(program, allow_cidrs, state=None):
@@ -168,7 +190,7 @@ def verify(program, allow_cidrs, state=None):
     state = state or read_rule()
     problems = []
     if not state.exists:
-        return Verification(False, ["防火牆中沒有這條規則"])
+        return Verification(["防火牆中沒有這條規則"])
     if state.name != RULE_NAME:
         problems.append(f"目前是舊版建立的規則（{state.name}），請重新套用")
     if state.count > 1:
@@ -185,12 +207,9 @@ def verify(program, allow_cidrs, state=None):
         problems.append("規則沒有限定程式，會影響所有程式！請立即解除")
     elif os.path.normcase(os.path.normpath(state.program)) != os.path.normcase(os.path.normpath(program)):
         problems.append(f"程式路徑是 {state.program}，不是 {program}")
+    mismatch = False
     try:
-        actual = entries_to_intervals(state.remote)
-        expected = block_intervals(allow_cidrs)
-        for v in (4, 6):
-            if actual[v] != expected[v]:
-                problems.append(f"IPv{v} 封鎖範圍與目前選擇的區域不一致")
+        mismatch = entries_to_intervals(state.remote) != block_intervals(allow_cidrs)
     except ValueError as e:
         problems.append(f"無法解析規則中的位址：{e}")
-    return Verification(not problems, problems)
+    return Verification(problems, mismatch)

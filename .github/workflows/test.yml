@@ -1,0 +1,16 @@
+# push 與 pull request 時跑單元測試
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - name: Test
+        run: uv run python -m unittest discover -s tests

@@ -4,7 +4,7 @@
 """
 
 import json
-import shutil
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -19,10 +19,12 @@ CONFIG_PATH = DATA_DIR / "config.json"
 SERVERS_PATH = DATA_DIR / "servers.json"
 
 
-def ensure_servers_file():
-    """exe 第一次執行時，把內建的伺服器清單複製到 exe 旁邊，之後的更新才存得下來。"""
-    if not SERVERS_PATH.exists():
-        shutil.copyfile(BUNDLED_SERVERS, SERVERS_PATH)
+def write_json(path, data):
+    """先寫暫存檔再取代，寫到一半被中斷也不會留下壞掉的檔案。"""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 @dataclass
@@ -39,5 +41,13 @@ class Config:
         return cls(program=data.get("program", ""), allowed=list(data.get("allowed", ["gtk1"])))
 
     def save(self, path=CONFIG_PATH):
-        Path(path).write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n",
-                              encoding="utf-8")
+        write_json(path, asdict(self))
+
+    def drop_unknown(self, servers):
+        """移除伺服器清單裡已經沒有的區域代號（否則介面上沒有那一列可以取消勾選）。
+
+        回傳被移除的代號；不會自動存檔。
+        """
+        unknown = [t for t in self.allowed if servers.get(t) is None]
+        self.allowed = [t for t in self.allowed if t not in unknown]
+        return unknown

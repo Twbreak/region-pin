@@ -1,4 +1,5 @@
 {
+  "version": 1,
   "_comment": "有 gcp_scope 的區域，cidrs 由「更新伺服器清單」從 Google 官方 cloud.json 覆寫；extra_cidrs 為手動補充、不會被覆寫。沒有 gcp_scope 的是 Blizzard 自有機房，清單取自 dropship，可能過時。",
   "always_allow": [
     {

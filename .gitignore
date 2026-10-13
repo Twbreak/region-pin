@@ -6,3 +6,5 @@ venv/
 config.json
 build/
 dist/
+*.json.tmp
+*.json.bak

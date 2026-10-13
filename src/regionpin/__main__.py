@@ -14,13 +14,12 @@ import argparse
 import sys
 
 from regionpin import APP_NAME, firewall, probe, system
-from regionpin.config import SERVERS_PATH, Config, ensure_servers_file
-from regionpin.servers import ServerList
+from regionpin.config import SERVERS_PATH, Config
+from regionpin.servers import ServerList, ensure_servers_file
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    ensure_servers_file()
     if not argv:
         return gui()
     p = argparse.ArgumentParser(prog="regionpin", description=APP_NAME)
@@ -35,8 +34,15 @@ def main(argv=None):
     sub.add_parser("check")
     args = p.parse_args(argv)
 
+    notice = ensure_servers_file()
+    if notice:
+        print(notice)
     servers = ServerList.load(SERVERS_PATH)
     cfg = Config.load()
+    unknown = cfg.drop_unknown(servers)
+    if unknown:
+        cfg.save()
+        print("設定中的區域已不在伺服器清單內，已移除：" + "、".join(unknown))
 
     if args.cmd in ("apply", "remove", "check") and not system.is_admin():
         print("這個指令需要系統管理員權限，請用「以系統管理員身分執行」開啟終端機。")
@@ -53,7 +59,7 @@ def main(argv=None):
             print(f"程式：{state.program}")
             if cfg.program and cfg.allowed:
                 v = firewall.verify(cfg.program, servers.allow_cidrs(cfg.allowed), state)
-                print("與設定一致" if v.ok else "與設定不一致：" + "；".join(v.problems))
+                print("與設定一致" if v.ok else "與設定不一致：" + "；".join(v.messages()))
         if problem:
             print("警告：" + problem)
         return 0
@@ -66,7 +72,7 @@ def main(argv=None):
         v = firewall.apply_rule(program, servers.allow_cidrs(args.tokens))
         cfg.program, cfg.allowed = program, list(args.tokens)
         cfg.save()
-        print("已套用並驗證" if v.ok else "驗證失敗：" + "；".join(v.problems))
+        print("已套用並驗證" if v.ok else "驗證失敗：" + "；".join(v.messages()))
         return 0 if v.ok else 1
 
     if args.cmd == "remove":
@@ -108,7 +114,7 @@ def gui():
             return 1
         return 0
     from regionpin.gui import run
-    run()
+    run(ensure_servers_file())
     return 0
 
 

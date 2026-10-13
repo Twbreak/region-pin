@@ -3,13 +3,20 @@
 每個區域有兩種 IP 清單：
   cidrs        有 gcp_scope 的區域由「更新」自動覆寫；沒有的則手動維護
   extra_cidrs  手動補充，更新時不會被覆寫
+
+檔案頂層的 version 是手動維護資料（區域、Blizzard 自有機房 IP 等）的版本，修改時要加 1，
+新版 exe 才會把內建清單合併進使用者 exe 旁邊的舊檔案；gcp_synced 是最後從 Google 更新的日期。
 """
 
+import datetime
 import ipaddress
 import json
+import os
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .config import BUNDLED_SERVERS, SERVERS_PATH, write_json
 
 GCP_RANGES_URL = "https://www.gstatic.com/ipranges/cloud.json"
 
@@ -38,7 +45,11 @@ class ServerList:
     @classmethod
     def load(cls, path):
         path = Path(path)
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        return cls.from_raw(path, json.loads(path.read_text(encoding="utf-8")))
+
+    @classmethod
+    def from_raw(cls, path, raw):
+        """由 JSON 內容建立；格式錯誤時丟出 ValueError / KeyError / TypeError。"""
         regions = [Region(r["token"], r["name"], list(r.get("cidrs", [])),
                           list(r.get("extra_cidrs", [])), r.get("ping", ""),
                           r.get("gcp_scope", ""))
@@ -52,8 +63,7 @@ class ServerList:
         by_token = {r.token: r for r in self.regions}
         for r in self.raw["regions"]:
             r["cidrs"] = by_token[r["token"]].cidrs
-        self.path.write_text(json.dumps(self.raw, ensure_ascii=False, indent=2) + "\n",
-                             encoding="utf-8")
+        write_json(self.path, self.raw)
 
     def get(self, token):
         return next((r for r in self.regions if r.token == token), None)
@@ -104,8 +114,68 @@ class ServerList:
                 new = sorted(set(by_scope[r.gcp_scope]), key=_sort_key)
                 changes[r.token] = (len(r.cidrs), len(new))
                 r.cidrs = new
+        self.raw["gcp_synced"] = datetime.date.today().isoformat()
         self.save()
         return changes
+
+
+def ensure_servers_file(path=SERVERS_PATH, bundled=BUNDLED_SERVERS):
+    """準備 exe 旁邊可寫入的伺服器清單。回傳要告訴使用者的訊息（沒有則為空字串）。
+
+    - 第一次執行：複製內建清單
+    - 檔案壞掉：備份成 .bak，改用內建清單
+    - 內建清單的 version 比較新：合併（見 merge_bundled）
+    """
+    path, bundled = Path(path), Path(bundled)
+    if path.resolve() == bundled.resolve():  # 從原始碼執行時就是同一個檔案
+        return ""
+    new = json.loads(bundled.read_text(encoding="utf-8"))
+    try:
+        if not path.exists():
+            write_json(path, new)
+            return ""
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            ServerList.from_raw(path, old)
+        except (ValueError, KeyError, TypeError) as e:
+            backup = path.with_name(path.name + ".bak")
+            os.replace(path, backup)
+            write_json(path, new)
+            return f"{path.name} 格式錯誤（{e}），已備份為 {backup.name} 並改用內建清單"
+        if new.get("version", 0) > old.get("version", 0):
+            write_json(path, merge_bundled(old, new))
+            return f"伺服器清單已更新到第 {new.get('version')} 版（保留你的 extra_cidrs）"
+    except OSError as e:
+        return f"無法寫入 {path}：{e}"
+    return ""
+
+
+def merge_bundled(old, new):
+    """以新版內建清單為主，保留使用者在舊檔案裡的資料：
+
+    - extra_cidrs：新舊合併
+    - 有 gcp_scope 的 cidrs：用 gcp_synced 比較新的那份（日期相同或都沒有時保留舊檔，
+      因為沒有證據顯示內建的比較新）
+    - 使用者自己加、新版沒有的區域：保留
+    """
+    merged = json.loads(json.dumps(new))
+    old_regions = {r["token"]: r for r in old.get("regions", [])}
+    keep_local_gcp = old.get("gcp_synced", "") >= new.get("gcp_synced", "")
+    for r in merged["regions"]:
+        o = old_regions.pop(r["token"], None)
+        if o is None:
+            continue
+        extras = list(r.get("extra_cidrs", []))
+        extras += [c for c in o.get("extra_cidrs", []) if c not in extras]
+        if extras:
+            r["extra_cidrs"] = extras
+        same_scope = r.get("gcp_scope") and r.get("gcp_scope") == o.get("gcp_scope")
+        if same_scope and keep_local_gcp and o.get("cidrs"):
+            r["cidrs"] = o["cidrs"]
+    merged["regions"] += old_regions.values()
+    if keep_local_gcp and old.get("gcp_synced"):
+        merged["gcp_synced"] = old["gcp_synced"]
+    return merged
 
 
 def _contains(cidrs, addr):

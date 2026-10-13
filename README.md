@@ -29,7 +29,7 @@
 2. **勾選允許的區域**：點一下該列就能切換
 3. **套用**：只連勾選的區域。套用後會讀回防火牆規則驗證，結果顯示在「狀態」
 4. **解除限制**：移除規則，回到正常配對（在台灣會回到 TPE）
-5. **檢查目前連線**：在對戰中按下，會擷取 5 秒封包，顯示實際連到的伺服器屬於哪個機房
+5. **檢查目前連線**：在對戰中按下，會擷取 5 秒封包，顯示實際連到的伺服器屬於哪個機房（使用 Windows 內建的 `pktmon`；如果你自己也在用 pktmon，檢查時會停止你正在進行的擷取並清除篩選條件）
 
 遊戲內按 `Ctrl+Shift+N`，左上角的 `[代號]`（例如 `[gtk1]`）也會顯示目前的機房。
 **訓練中心不經過配對系統，測不出效果。**
@@ -74,6 +74,8 @@ Windows 防火牆的「封鎖」優先於「允許」，所以沒辦法寫成「
 - `extra_cidrs`：手動補充的網段，更新時不會被覆寫
 - 沒有 `gcp_scope` 的是 Blizzard 自有機房（芝加哥、拉斯維加斯、荷蘭、澳洲），清單取自 dropship，可能過時
 - `always_allow`：永遠放行（語音聊天 Vivox、區域網路）
+- `version`：手動維護資料（區域、Blizzard 自有機房 IP、`extra_cidrs` 等）的版本。修改這些內容時要加 1，新版 exe 才會把內建清單合併進使用者 exe 旁邊的舊檔案（保留使用者的 `extra_cidrs`，Google 清單取較新的那份）
+- `gcp_synced`：最後從 Google 更新的日期，由程式自動寫入
 
 Ping 欄顯示「無法測」是因為該機房不回應 ping，不代表連不上。
 
@@ -96,11 +98,12 @@ run.bat            雙擊從原始碼啟動
 pyproject.toml     專案設定（uv）
 RegionPin.spec     PyInstaller 打包設定
 .github/workflows/release.yml   推送 v* 標籤時自動打包並發布 Release
+.github/workflows/test.yml      push / pull request 時跑測試
 ```
 
 ## 發布新版本
 
-1. 修改 `pyproject.toml` 的 `version`
+1. 修改 `pyproject.toml` 的 `version`；如果手動改過 `servers.json`，把它的 `version` 也加 1
 2. 建立並推送標籤，GitHub Actions 會跑測試、打包 `RegionPin.exe` 並建立 Release：
 
 ```
