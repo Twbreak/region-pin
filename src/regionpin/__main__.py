@@ -113,6 +113,11 @@ def gui():
             mb.showerror(APP_NAME, "需要系統管理員權限才能修改防火牆。")
             return 1
         return 0
+    # 規則跟著視窗的生命週期，開兩個視窗時關掉一個就會解除另一個套用的規則
+    if not system.acquire_single_instance("Local\\RegionPin-GUI"):
+        import tkinter.messagebox as mb
+        mb.showinfo(APP_NAME, "RegionPin 已經開著了，請從工作列切換過去。")
+        return 0
     from regionpin.gui import run
     run(ensure_servers_file())
     return 0

@@ -27,10 +27,14 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
+CLOSE_EXIT, CLOSE_MINIMIZE = "exit", "minimize"
+
+
 @dataclass
 class Config:
     program: str = ""
     allowed: list = field(default_factory=lambda: ["gtk1"])
+    close_action: str = CLOSE_EXIT   # 按視窗的 X：exit = 解除限制並結束；minimize = 縮小到工作列
 
     @classmethod
     def load(cls, path=CONFIG_PATH):
@@ -38,7 +42,9 @@ class Config:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return cls()
-        return cls(program=data.get("program", ""), allowed=list(data.get("allowed", ["gtk1"])))
+        close = data.get("close_action", CLOSE_EXIT)
+        return cls(program=data.get("program", ""), allowed=list(data.get("allowed", ["gtk1"])),
+                   close_action=close if close in (CLOSE_EXIT, CLOSE_MINIMIZE) else CLOSE_EXIT)
 
     def save(self, path=CONFIG_PATH):
         write_json(path, asdict(self))

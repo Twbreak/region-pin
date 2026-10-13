@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from . import APP_NAME, firewall, probe, system
-from .config import SERVERS_PATH, Config
+from .config import CLOSE_EXIT, CLOSE_MINIMIZE, SERVERS_PATH, Config
 from .servers import ServerList
 
 CHECK = "✔"
@@ -25,9 +25,13 @@ class App:
         self.results = queue.Queue()
         self.fw = None          # 最後讀到的 (RuleState, FirewallProfiles)
         self.status_seq = 0     # 只採用最新一次讀取的結果
+        self.quitting = False   # 已按下結束：等目前的工作完成後解除限制並關閉
+        self.closed = False
+        self.minimize_hinted = False
 
         root.title(APP_NAME)
-        root.minsize(620, 640)
+        root.minsize(620, 680)
+        root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build()
         if notice:
             self.log(notice)
@@ -40,14 +44,19 @@ class App:
         if not self.cfg.program:
             self.detect_program(quiet=True)
         self.root.after(100, self._poll)
-        self.refresh_status()
+        self.clear_leftover_rule()
         self.ping_all()
 
     # ---------- 介面 ----------
     def _build(self):
         pad = {"padx": 10, "pady": 4}
-        main = ttk.Frame(self.root, padding=6)
-        main.pack(fill="both", expand=True)
+        tabs = ttk.Notebook(self.root)
+        tabs.pack(fill="both", expand=True, padx=6, pady=6)
+        main = ttk.Frame(tabs, padding=6)
+        tabs.add(main, text="主畫面")
+        settings = ttk.Frame(tabs, padding=6)
+        tabs.add(settings, text="設定")
+        self._build_settings(settings)
 
         f = ttk.LabelFrame(main, text="Overwatch.exe")
         f.pack(fill="x", **pad)
@@ -80,6 +89,8 @@ class App:
         self.btn_apply.pack(side="left", fill="x", expand=True)
         self.btn_remove = ttk.Button(f, text="解除限制（正常配對，例如回 TPE）", command=self.remove)
         self.btn_remove.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self.btn_exit = ttk.Button(f, text="結束", command=self.quit_app)
+        self.btn_exit.pack(side="left", padx=(6, 0))
 
         f = ttk.LabelFrame(main, text="狀態")
         f.pack(fill="x", **pad)
@@ -106,6 +117,27 @@ class App:
         self.log_box.pack(fill="both", expand=True, padx=6, pady=6)
 
         self.buttons = [self.btn_ping, self.btn_update, self.btn_apply, self.btn_remove, self.btn_check]
+
+    def _build_settings(self, parent):
+        f = ttk.LabelFrame(parent, text="限制什麼時候有效")
+        f.pack(fill="x", padx=10, pady=4)
+        ttk.Label(f, justify="left", wraplength=560, text=(
+            "限制只在這個程式開著的時候有效：\n"
+            "・開啟程式時，會先清除先前留下的規則，要按「套用」才會開始限制（會記住上次勾選的區域）\n"
+            "・結束程式時，會自動解除限制")).pack(fill="x", padx=6, pady=6)
+
+        f = ttk.LabelFrame(parent, text="按視窗右上角的 X 時")
+        f.pack(fill="x", padx=10, pady=4)
+        self.close_var = tk.StringVar(value=self.cfg.close_action)
+        for value, text in ((CLOSE_EXIT, "解除限制並結束程式"),
+                            (CLOSE_MINIMIZE, "縮小到工作列（限制維持有效，要按主畫面的「結束」才會關閉）")):
+            ttk.Radiobutton(f, text=text, value=value, variable=self.close_var,
+                            command=self._save_close_action).pack(anchor="w", padx=6, pady=2)
+        ttk.Frame(f).pack(pady=2)
+
+    def _save_close_action(self):
+        self.cfg.close_action = self.close_var.get()
+        self.cfg.save()
 
     def _fill_regions(self):
         self.tree.delete(*self.tree.get_children())
@@ -169,6 +201,10 @@ class App:
                     done(result, error)
                 except Exception as e:
                     self.log(f"錯誤：{e}")
+                if self.closed:
+                    return
+                if exclusive and self.quitting and not self.busy:
+                    self._remove_and_exit()
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
@@ -208,6 +244,7 @@ class App:
                 return  # 之後又發出了新的讀取，這筆已經過時
             if err:
                 self.fw = None
+                self.root.title(APP_NAME)
                 self._set_status("無法讀取防火牆狀態", BAD_COLOR, str(err))
                 self.log(f"讀取狀態失敗：{err}")
                 return
@@ -222,10 +259,13 @@ class App:
         state, profiles = self.fw
         fw_problem = profiles.problems()
         if not state.exists:
+            self.root.title(APP_NAME)
             self._set_status("未限制：正常配對（會自動選最近的機房，例如 TPE）", IDLE_COLOR, fw_problem)
             return
         actual = firewall.allowed_regions(state, self.servers)
         names = "、".join(f"{r.name} ({r.token})" for r in actual) or "（沒有任何已知區域）"
+        # 狀態放在前面：縮到工作列時標題會被截斷
+        self.root.title(f"鎖定中：{'、'.join(r.name for r in actual) or '未知'} — {APP_NAME}")
         if fw_problem:
             self._set_status("規則存在但沒有生效", BAD_COLOR, fw_problem)
             return
@@ -251,6 +291,65 @@ class App:
         self.status_var.set(text)
         self.status_lbl.configure(fg=color)
         self.detail_var.set(detail)
+
+    # ---------- 生命週期：限制只在程式開著的時候有效 ----------
+    def clear_leftover_rule(self):
+        """啟動時清除先前留下的規則（上次沒有正常結束，或是用命令列套用的）。"""
+        self._set_status("啟動中：檢查先前留下的規則…", IDLE_COLOR)
+
+        def work():
+            state = firewall.read_rule()
+            if not state.exists:
+                return None
+            try:
+                names = "、".join(r.name for r in firewall.allowed_regions(state, self.servers))
+            except ValueError:
+                names = ""
+            firewall.remove_rule()
+            return names or "未知區域"
+
+        def done(names, err):
+            if err:
+                self.log(f"清除先前的規則失敗：{err}")
+                messagebox.showerror(APP_NAME, f"無法清除先前留下的規則：\n{err}\n\n目前可能仍有限制，請看「狀態」。")
+            elif names:
+                self.log(f"已清除先前留下的規則（只能連到 {names}），可能是上次沒有正常結束")
+            self.refresh_status()
+        self.run_task("", work, done)
+
+    def on_close(self):
+        if self.cfg.close_action == CLOSE_MINIMIZE and not self.quitting:
+            if not self.minimize_hinted:
+                self.minimize_hinted = True
+                self.log("已縮小到工作列，限制仍然有效。要關閉請按主畫面的「結束」")
+            self.root.iconify()
+            return
+        self.quit_app()
+
+    def quit_app(self):
+        """解除限制後結束。有工作正在執行時，等它完成再做。"""
+        if self.quitting:
+            return
+        self.quitting = True
+        self.btn_exit.state(["disabled"])
+        if self.busy:
+            self.log("等目前的工作完成後，解除限制並結束…")
+            return
+        self._remove_and_exit()
+
+    def _remove_and_exit(self):
+        def done(_, err):
+            if err:
+                self.quitting = False
+                self.btn_exit.state(["!disabled"])
+                self.log(f"解除失敗：{err}")
+                messagebox.showerror(APP_NAME, f"解除限制失敗，程式不會關閉：\n{err}")
+                self.refresh_status()
+                return
+            self.closed = True
+            self.root.destroy()
+        self._set_status("解除限制並結束中…", IDLE_COLOR)
+        self.run_task("解除限制並結束中…", firewall.remove_rule, done)
 
     def apply(self):
         program = self.program_var.get().strip()

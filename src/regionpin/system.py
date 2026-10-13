@@ -69,6 +69,24 @@ def is_admin():
         return False
 
 
+_ERROR_ALREADY_EXISTS = 183
+_mutexes = []  # 保留 handle，程式結束時由系統釋放
+
+
+def acquire_single_instance(name):
+    """用具名 mutex 確保只有一個實例。已經有其他實例在執行時回傳 False。"""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel32.CreateMutexW(None, False, name)
+    if not handle:
+        return True  # 建立失敗時不擋使用者
+    if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        return False
+    _mutexes.append(handle)
+    return True
+
+
 def relaunch_as_admin(args):
     """以系統管理員身分重新啟動自己。成功送出 UAC 要求回傳 True。"""
     exe = sys.executable
