@@ -2,12 +2,12 @@
 
 不帶參數：開啟圖形介面（會自動要求系統管理員權限）。
 命令列：
-  python main.py status              顯示目前規則狀態
-  python main.py apply gtk1 [...]    只允許指定區域（需要系統管理員）
-  python main.py remove              解除限制（需要系統管理員）
-  python main.py regions             列出區域與 ping
-  python main.py update              從 Google 更新伺服器清單
-  python main.py check               檢查目前對戰連到哪裡（需要系統管理員）
+  regionpin status              顯示目前規則狀態
+  regionpin apply gtk1 [...]    只允許指定區域（需要系統管理員）
+  regionpin remove              解除限制（需要系統管理員）
+  regionpin regions             列出區域與 ping
+  regionpin update              從 Google 更新伺服器清單
+  regionpin check               檢查目前對戰連到哪裡（需要系統管理員）
 """
 
 import argparse
@@ -18,11 +18,12 @@ from regionpin.config import SERVERS_PATH, Config, ensure_servers_file
 from regionpin.servers import ServerList
 
 
-def main(argv):
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     ensure_servers_file()
     if not argv:
         return gui()
-    p = argparse.ArgumentParser(prog="main.py", description=APP_NAME)
+    p = argparse.ArgumentParser(prog="regionpin", description=APP_NAME)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     a = sub.add_parser("apply")
@@ -112,4 +113,4 @@ def gui():
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

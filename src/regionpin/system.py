@@ -79,9 +79,8 @@ def relaunch_as_admin(args):
         pythonw = Path(exe).with_name("pythonw.exe")
         if pythonw.exists():
             exe = str(pythonw)
-        script = str(Path(sys.argv[0]).resolve())
-        params = subprocess.list2cmdline([script] + list(args))
-        workdir = str(Path(script).parent)
+        params = subprocess.list2cmdline(["-m", "regionpin"] + list(args))
+        workdir = os.getcwd()
     rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, workdir, 1)
     return rc > 32
 

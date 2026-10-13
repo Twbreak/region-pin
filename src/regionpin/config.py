@@ -13,7 +13,7 @@ if getattr(sys, "frozen", False):
     DATA_DIR = Path(sys.executable).resolve().parent
     BUNDLED_SERVERS = Path(sys._MEIPASS) / "servers.json"
 else:
-    DATA_DIR = Path(__file__).resolve().parent.parent
+    DATA_DIR = Path(__file__).resolve().parents[2]
     BUNDLED_SERVERS = DATA_DIR / "servers.json"
 CONFIG_PATH = DATA_DIR / "config.json"
 SERVERS_PATH = DATA_DIR / "servers.json"

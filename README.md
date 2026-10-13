@@ -39,19 +39,19 @@
 需要 Python 3.10 以上（只用標準函式庫）。用 [uv](https://docs.astral.sh/uv/) 管理環境：
 
 ```
-uv run main.py                   開啟圖形介面（或雙擊 run.bat）
+uv run regionpin                 開啟圖形介面（或雙擊 run.bat）
 uv run python -m unittest discover -s tests
 ```
 
 命令列模式（只在原始碼版本可用）：
 
 ```
-uv run main.py status            目前規則狀態
-uv run main.py apply gtk1        只允許日本（可多個：apply gtk1 gsg1）
-uv run main.py remove            解除限制
-uv run main.py regions           列出區域與 ping
-uv run main.py update            從 Google 更新伺服器清單
-uv run main.py check             檢查目前對戰連到哪裡
+uv run regionpin status          目前規則狀態
+uv run regionpin apply gtk1      只允許日本（可多個：apply gtk1 gsg1）
+uv run regionpin remove          解除限制
+uv run regionpin regions         列出區域與 ping
+uv run regionpin update          從 Google 更新伺服器清單
+uv run regionpin check           檢查目前對戰連到哪裡
 ```
 
 `apply`、`remove`、`check` 需要在「以系統管理員身分執行」的終端機中使用。
@@ -64,7 +64,7 @@ uv run main.py check             檢查目前對戰連到哪裡
 - 只擋**往外的 UDP**：登入、商城、好友等 TCP 服務不受影響
 - 封鎖範圍 = 整個 IP 空間扣掉「選定區域 + 語音聊天 + 區域網路」
 
-Windows 防火牆的「封鎖」優先於「允許」，所以沒辦法寫成「全擋＋放行日本」。程式會先算出白名單的補集，再只封鎖這些區段（見 `regionpin/ranges.py`）。
+Windows 防火牆的「封鎖」優先於「允許」，所以沒辦法寫成「全擋＋放行日本」。程式會先算出白名單的補集，再只封鎖這些區段（見 `src/regionpin/ranges.py`）。
 
 規則會一直保留，關掉程式後仍然有效，直到你按「解除限制」為止。
 
@@ -80,20 +80,21 @@ Ping 欄顯示「無法測」是因為該機房不回應 ping，不代表連不�
 ## 檔案
 
 ```
-main.py            進入點（圖形介面 / 命令列）
-run.bat            雙擊啟動
-servers.json       機房 IP 清單
-config.json        你的設定（自動產生）
-pyproject.toml     專案設定（uv）
-RegionPin.spec     PyInstaller 打包設定
-regionpin/
+src/regionpin/
+  __main__.py      進入點（圖形介面 / 命令列）
   ranges.py        IP 區段運算（白名單 → 封鎖清單、解析讀回的規則）
   servers.py       伺服器清單讀寫、Google 更新、IP → 機房
   firewall.py      建立 / 移除 / 讀回驗證防火牆規則
   probe.py         ping、pktmon 封包擷取
   system.py        PowerShell、系統管理員權限、尋找 Overwatch.exe
+  config.py        設定與資料檔位置
   gui.py           tkinter 介面
 tests/             單元測試
+servers.json       機房 IP 清單
+config.json        你的設定（自動產生）
+run.bat            雙擊從原始碼啟動
+pyproject.toml     專案設定（uv）
+RegionPin.spec     PyInstaller 打包設定
 .github/workflows/release.yml   推送 v* 標籤時自動打包並發布 Release
 ```
 

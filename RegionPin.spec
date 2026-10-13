@@ -2,8 +2,8 @@
 
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    ['src/regionpin/__main__.py'],
+    pathex=['src'],
     binaries=[],
     datas=[('servers.json', '.')],
     hiddenimports=[],
